@@ -2,6 +2,9 @@
 /**
  * @file main
  *
+ * Runtime is selected in shell_app_runtime/runtime.h:
+ * - Shell binary: SHELL_PROCESS ¡ª SDL HAL + shell_main (compositor + LVGL chrome).
+ * - App binary:   APP_PROCESS ¡ª LVGL headless for the shared middle region; no SDL.
  */
 
 /*********************
@@ -17,6 +20,11 @@
 #include "lvgl/demos/lv_demos.h"
 #include "glob.h"
 
+// #include "runtime.h"
+
+#if (defined(SHELL_PROCESS) || defined(APP_PROCESS))
+#include "protocol.h"
+#endif
 /*********************
  *      DEFINES
  *********************/
@@ -28,13 +36,16 @@
 /**********************
  *  STATIC PROTOTYPES
  **********************/
-static lv_display_t * hal_init(int32_t w, int32_t h);
+lv_display_t * hal_init(int32_t w, int32_t h);
+#if defined(APP_PROCESS)
+static void app_lv_init_hal_no_sdl(void);
+#endif
 
 /**********************
  *  STATIC VARIABLES
  **********************/
 
-/********************** 
+/**********************
  *      MACROS
  **********************/
 
@@ -73,10 +84,24 @@ int main(int argc, char **argv)
   lv_init();
 
   /*Initialize the HAL (display, input devices, tick) for LVGL*/
+#if defined(APP_PROCESS)
+  /* App renders into shared memfd; no local SDL window or second HAL display. */
+  app_lv_init_hal_no_sdl();
+#elif defined(SHELL_PROCESS)
+  /* SDL before shell_main: window + LVGL must run while we wait for app to connect. */
+  hal_init(SCREEN_W, SCREEN_H);
+#else
   hal_init(320, 480);
+#endif
 
   #if LV_USE_OS == LV_OS_NONE
- 
+
+  #if (defined(SHELL_PROCESS))
+  shell_main(argc, argv);
+  #elif (defined(APP_PROCESS))
+  app_main();
+  #else
+
   lv_demo_widgets();
 
   while(1) {
@@ -86,10 +111,12 @@ int main(int argc, char **argv)
     usleep(5 * 1000);
   }
 
+  #endif
+
   #elif LV_USE_OS == LV_OS_FREERTOS
 
   /* Run FreeRTOS and create lvgl task */
-  freertos_main();  
+  freertos_main();
 
   #endif
 
@@ -104,7 +131,14 @@ int main(int argc, char **argv)
  * Initialize the Hardware Abstraction Layer (HAL) for the LVGL graphics
  * library
  */
-static lv_display_t * hal_init(int32_t w, int32_t h)
+#if defined(APP_PROCESS)
+static void app_lv_init_hal_no_sdl(void)
+{
+  lv_group_set_default(lv_group_create());
+}
+#endif
+
+lv_display_t * hal_init(int32_t w, int32_t h)
 {
 
   lv_group_set_default(lv_group_create());

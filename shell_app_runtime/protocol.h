@@ -23,7 +23,11 @@ typedef enum {
     MSG_SHELL_SURFACE,
     MSG_SHELL_VIEWPORT_UPDATE,
     MSG_APP_PRESENT,
-    MSG_APP_NAV_REQ
+    MSG_APP_NAV_REQ,
+    MSG_SHELL_INPUT_POINTER,
+    MSG_SHELL_INPUT_KEY,
+    MSG_SHELL_SET_FOREGROUND,
+    MSG_SHELL_GO_HOME
 } msg_type_t;
 
 #pragma pack(push, 1)
@@ -42,8 +46,14 @@ typedef struct {
     uint16_t vp_h;
     uint32_t stride_bytes;
 
+    uint16_t app_id;
+    uint16_t input_x;
+    uint16_t input_y;
+    uint16_t reserved0;
+    uint32_t key_code;
     uint8_t nav_visible; /* 0 hide, 1 show */
-    uint8_t reserved[3];
+    uint8_t input_state; /* 0 released, 1 pressed */
+    uint8_t reserved[2];
 } runtime_msg_t;
 #pragma pack(pop)
 

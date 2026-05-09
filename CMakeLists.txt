@@ -117,8 +117,26 @@ else()
         ${PROJECT_SOURCE_DIR}/shell_app_runtime/app/app_runtime.c
         ${PROJECT_SOURCE_DIR}/shell_app_runtime/ipc.c
     )
-    target_compile_definitions(app_runtime PRIVATE LV_CONF_INCLUDE_SIMPLE APP_PROCESS)
+    target_compile_definitions(app_runtime PRIVATE LV_CONF_INCLUDE_SIMPLE APP_PROCESS APP_VARIANT=0)
     lv_port_target_includes_and_link(app_runtime)
+
+    add_executable(app_runtime_b
+        ${PROJECT_SOURCE_DIR}/main/src/main.c
+        ${PROJECT_SOURCE_DIR}/main/src/mouse_cursor_icon.c
+        ${PROJECT_SOURCE_DIR}/shell_app_runtime/app/app_runtime.c
+        ${PROJECT_SOURCE_DIR}/shell_app_runtime/ipc.c
+    )
+    target_compile_definitions(app_runtime_b PRIVATE LV_CONF_INCLUDE_SIMPLE APP_PROCESS APP_VARIANT=1)
+    lv_port_target_includes_and_link(app_runtime_b)
+
+    add_executable(app_runtime_c
+        ${PROJECT_SOURCE_DIR}/main/src/main.c
+        ${PROJECT_SOURCE_DIR}/main/src/mouse_cursor_icon.c
+        ${PROJECT_SOURCE_DIR}/shell_app_runtime/app/app_runtime.c
+        ${PROJECT_SOURCE_DIR}/shell_app_runtime/ipc.c
+    )
+    target_compile_definitions(app_runtime_c PRIVATE LV_CONF_INCLUDE_SIMPLE APP_PROCESS APP_VARIANT=2)
+    lv_port_target_includes_and_link(app_runtime_c)
 
     add_executable(shell_sdl_smoke ${PROJECT_SOURCE_DIR}/tests/shell_sdl_smoke.c)
     target_compile_definitions(shell_sdl_smoke PRIVATE LV_CONF_INCLUDE_SIMPLE)
@@ -131,7 +149,7 @@ if(USE_FREERTOS)
 endif()
 
 # Custom target to run the executable
-add_custom_target(run COMMAND ${EXECUTABLE_OUTPUT_PATH}/main DEPENDS main app_runtime)
+add_custom_target(run COMMAND ${EXECUTABLE_OUTPUT_PATH}/shell DEPENDS shell app_runtime app_runtime_b app_runtime_c)
 
 # Conditionally include and link SDL2_image if LV_USE_DRAW_SDL is enabled
 if(LV_USE_DRAW_SDL)
@@ -141,6 +159,12 @@ if(LV_USE_DRAW_SDL)
     target_link_libraries(main ${SDL2_IMAGE_LIBRARIES})
     if(TARGET app_runtime)
         target_link_libraries(app_runtime ${SDL2_IMAGE_LIBRARIES})
+    endif()
+    if(TARGET app_runtime_b)
+        target_link_libraries(app_runtime_b ${SDL2_IMAGE_LIBRARIES})
+    endif()
+    if(TARGET app_runtime_c)
+        target_link_libraries(app_runtime_c ${SDL2_IMAGE_LIBRARIES})
     endif()
 endif()
 
@@ -152,6 +176,12 @@ if(LV_USE_LIBPNG)
     if(TARGET app_runtime)
         target_link_libraries(app_runtime ${PNG_LIBRARIES})
     endif()
+    if(TARGET app_runtime_b)
+        target_link_libraries(app_runtime_b ${PNG_LIBRARIES})
+    endif()
+    if(TARGET app_runtime_c)
+        target_link_libraries(app_runtime_c ${PNG_LIBRARIES})
+    endif()
 endif()
 
 # Conditionally include and link libjpeg-turbo if LV_USE_LIBJPEG_TURBO is enabled
@@ -162,6 +192,12 @@ if(LV_USE_LIBJPEG_TURBO)
     if(TARGET app_runtime)
         target_link_libraries(app_runtime ${JPEG_LIBRARIES})
     endif()
+    if(TARGET app_runtime_b)
+        target_link_libraries(app_runtime_b ${JPEG_LIBRARIES})
+    endif()
+    if(TARGET app_runtime_c)
+        target_link_libraries(app_runtime_c ${JPEG_LIBRARIES})
+    endif()
 endif()
 
 # Conditionally include and link FFmpeg libraries if LV_USE_FFMPEG is enabled
@@ -169,6 +205,12 @@ if(LV_USE_FFMPEG)
     target_link_libraries(main avformat avcodec avutil swscale z)
     if(TARGET app_runtime)
         target_link_libraries(app_runtime avformat avcodec avutil swscale z)
+    endif()
+    if(TARGET app_runtime_b)
+        target_link_libraries(app_runtime_b avformat avcodec avutil swscale z)
+    endif()
+    if(TARGET app_runtime_c)
+        target_link_libraries(app_runtime_c avformat avcodec avutil swscale z)
     endif()
 endif()
 
@@ -179,6 +221,12 @@ if(LV_USE_FREETYPE)
     target_link_libraries(main ${FREETYPE_LIBRARIES})
     if(TARGET app_runtime)
         target_link_libraries(app_runtime ${FREETYPE_LIBRARIES})
+    endif()
+    if(TARGET app_runtime_b)
+        target_link_libraries(app_runtime_b ${FREETYPE_LIBRARIES})
+    endif()
+    if(TARGET app_runtime_c)
+        target_link_libraries(app_runtime_c ${FREETYPE_LIBRARIES})
     endif()
 endif()
 

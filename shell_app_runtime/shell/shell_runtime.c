@@ -79,6 +79,7 @@ struct shell_ctx_t {
     lv_obj_t *status_label;
     bool status_dirty;
     uint32_t status_last_tick;
+    uint32_t last_fwd_key; /* last key forwarded to fg (for SDL release with key==0) */
     launch_ud_t launch_ud[MAX_APPS];
     shell_app_slot_t apps[MAX_APPS];
 };
@@ -138,6 +139,50 @@ static void shell_send_msg(shell_ctx_t *ctx, shell_app_slot_t *app, runtime_msg_
     m->seq = ++ctx->seq;
     m->app_id = app->id;
     ipc_send_msg(app->conn_fd, m);
+}
+
+/* SDL keyboard -> LVGL keypad: remap forwards keys to foreground app only; return 0 to swallow in shell. */
+static lv_key_t shell_key_remap(lv_indev_t *indev, lv_key_t key)
+{
+    shell_ctx_t *ctx = (shell_ctx_t *)lv_indev_get_user_data(indev);
+    shell_app_slot_t *fg;
+    runtime_msg_t m;
+
+    if (!ctx) return key;
+    if (ctx->launcher_mode || ctx->fg_app_id == 0) return key;
+
+    fg = shell_find_app(ctx, ctx->fg_app_id);
+    if (!fg || !fg->connected) return key;
+
+    memset(&m, 0, sizeof(m));
+    m.type = MSG_SHELL_INPUT_KEY;
+
+    if (key != 0) {
+        ctx->last_fwd_key = (uint32_t)key;
+        m.key_code = (uint32_t)key;
+        m.input_state = 1;
+        shell_send_msg(ctx, fg, &m);
+        return 0;
+    }
+    /* SDL dummy read: release; forward only if we had a preceding press */
+    if (ctx->last_fwd_key == 0) return 0;
+    m.key_code = ctx->last_fwd_key;
+    m.input_state = 0;
+    shell_send_msg(ctx, fg, &m);
+    ctx->last_fwd_key = 0;
+    return 0;
+}
+
+static void shell_attach_keyboard_forward(shell_ctx_t *ctx)
+{
+    lv_indev_t *indev;
+    for (indev = lv_indev_get_next(NULL); indev; indev = lv_indev_get_next(indev)) {
+        if (lv_indev_get_type(indev) == LV_INDEV_TYPE_KEYPAD) {
+            lv_indev_set_user_data(indev, ctx);
+            lv_indev_set_key_remap_cb(indev, shell_key_remap);
+            break;
+        }
+    }
 }
 
 static void shell_send_viewport(shell_ctx_t *ctx, shell_app_slot_t *app)
@@ -286,6 +331,7 @@ static void shell_enter_launcher(shell_ctx_t *ctx)
 {
     ctx->launcher_mode = true;
     ctx->fg_app_id = 0;
+    ctx->last_fwd_key = 0;
     lv_obj_clear_flag(ctx->content_host, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(ctx->launcher, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(ctx->touch_proxy, LV_OBJ_FLAG_HIDDEN);
@@ -304,6 +350,7 @@ static void shell_set_foreground(shell_ctx_t *ctx, uint16_t app_id)
     if (!app) return;
     shell_launch(app);
     ctx->launcher_mode = false;
+    ctx->last_fwd_key = 0;
     ctx->fg_app_id = app_id;
     lv_obj_add_flag(ctx->content_host, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(ctx->launcher, LV_OBJ_FLAG_HIDDEN);
@@ -550,6 +597,7 @@ int shell_main(int argc, char **argv)
     ctx.apps[2] = (shell_app_slot_t){3, "App C", "app_runtime_c", 0, -1, -1, NULL, 0, 0, false, false};
     shell_calc_viewport(&ctx);
     shell_create_ui(&ctx);
+    shell_attach_keyboard_forward(&ctx);
     ctx.status_dirty = true;
     ctx.status_last_tick = 0;
     shell_status_paint(&ctx);

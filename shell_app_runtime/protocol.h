@@ -25,7 +25,7 @@ typedef enum {
     MSG_APP_PRESENT,
     MSG_APP_NAV_REQ,
     MSG_SHELL_INPUT_POINTER,
-    MSG_SHELL_INPUT_KEY,
+    MSG_SHELL_INPUT_KEY, /* key_code: LVGL/LV_KEY_* or UTF-32-ish from SDL; input_state: 1 press 0 release */
     MSG_SHELL_SET_FOREGROUND,
     MSG_SHELL_GO_HOME
 } msg_type_t;

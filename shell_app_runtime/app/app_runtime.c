@@ -43,6 +43,8 @@ typedef struct {
     lv_obj_t *root;
     lv_obj_t *title_label;
     lv_obj_t *info_label;
+    lv_obj_t *textarea;
+    lv_group_t *kbd_group;
     lv_obj_t *btn_a;
     lv_indev_state_t ptr_state;
     lv_point_t ptr_point;
@@ -132,10 +134,20 @@ static void app_build_ui(app_ctx_t *ctx)
     ctx->title_label = lv_label_create(ctx->root);
     lv_obj_align(ctx->title_label, LV_ALIGN_TOP_MID, 0, 2);
     lv_obj_set_style_text_color(ctx->title_label, lv_color_hex(0xECEFF1), LV_PART_MAIN);
+    ctx->textarea = lv_textarea_create(ctx->root);
+    lv_textarea_set_one_line(ctx->textarea, true);
+    lv_textarea_set_placeholder_text(ctx->textarea, "Type here (keys from Shell/SDL)");
+    lv_obj_set_width(ctx->textarea, ctx->vp_w - 24);
+    lv_obj_set_height(ctx->textarea, 36);
+    lv_obj_align(ctx->textarea, LV_ALIGN_TOP_MID, 0, 22);
+    lv_obj_set_style_bg_color(ctx->textarea, lv_color_hex(0x263238), LV_PART_MAIN);
+    lv_obj_set_style_text_color(ctx->textarea, lv_color_hex(0xECEFF1), LV_PART_MAIN);
+    lv_group_add_obj(ctx->kbd_group, ctx->textarea);
+    lv_group_focus_obj(ctx->textarea);
     ctx->info_label = lv_label_create(ctx->root);
     lv_label_set_long_mode(ctx->info_label, LV_LABEL_LONG_MODE_WRAP);
     lv_obj_set_width(ctx->info_label, ctx->vp_w - 24);
-    lv_obj_align(ctx->info_label, LV_ALIGN_CENTER, 0, 4);
+    lv_obj_align(ctx->info_label, LV_ALIGN_CENTER, 0, 28);
     ctx->btn_a = lv_button_create(ctx->root);
     lv_obj_set_size(ctx->btn_a, 126, 34);
     lv_obj_align(ctx->btn_a, LV_ALIGN_BOTTOM_MID, 0, -8);
@@ -177,6 +189,7 @@ static void app_apply_viewport(app_ctx_t *ctx, const runtime_msg_t *m)
     lv_display_set_resolution(ctx->disp, ctx->vp_w, ctx->vp_h);
     lv_obj_set_size(ctx->root, ctx->vp_w, ctx->vp_h);
     lv_obj_set_width(ctx->info_label, ctx->vp_w - 24);
+    lv_obj_set_width(ctx->textarea, ctx->vp_w - 24);
     if (!ctx->nav_visible) {
         lv_obj_clear_flag(ctx->btn_a, LV_OBJ_FLAG_HIDDEN);
         lv_obj_move_foreground(ctx->btn_a);
@@ -231,6 +244,9 @@ int app_main(void)
     }
     lv_display_set_default(ctx.disp);
 
+    ctx.kbd_group = lv_group_create();
+    lv_group_set_default(ctx.kbd_group);
+
     ctx.ptr_indev = lv_indev_create();
     lv_indev_set_type(ctx.ptr_indev, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(ctx.ptr_indev, app_pointer_read);
@@ -254,6 +270,7 @@ int app_main(void)
             if (!ctx.is_foreground) {
                 lv_obj_invalidate(ctx.info_label);
                 lv_obj_invalidate(ctx.title_label);
+                if (ctx.textarea) lv_obj_invalidate(ctx.textarea);
             }
         }
 
@@ -266,8 +283,13 @@ int app_main(void)
                 rc = ipc_recv_msg(ctx.sock, &m);
                 if (rc != 0) return rc == 1 ? 0 : 1;
                 if (m.type == MSG_SHELL_VIEWPORT_UPDATE) app_apply_viewport(&ctx, &m);
-                else if (m.type == MSG_SHELL_SET_FOREGROUND) ctx.is_foreground = m.input_state != 0;
-                else if (m.type == MSG_SHELL_INPUT_POINTER) {
+                else if (m.type == MSG_SHELL_SET_FOREGROUND) {
+                    ctx.is_foreground = m.input_state != 0;
+                    if (ctx.is_foreground && ctx.textarea) lv_group_focus_obj(ctx.textarea);
+                } else if (m.type == MSG_SHELL_INPUT_KEY) {
+                    if (ctx.is_foreground && ctx.kbd_group && m.key_code != 0 && m.input_state)
+                        (void)lv_group_send_data(ctx.kbd_group, m.key_code);
+                } else if (m.type == MSG_SHELL_INPUT_POINTER) {
                     ctx.ptr_point.x = m.input_x;
                     ctx.ptr_point.y = m.input_y;
                     ctx.ptr_state = m.input_state ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;

@@ -36,6 +36,7 @@ typedef struct {
     uint32_t seq;
     uint32_t tick_ms;
     uint32_t beat;
+    uint32_t present_sent; /* flush_cb: proves LVGL still submitting frames */
     lv_display_t *disp;
     void *draw_buf_owner;
     lv_indev_t *ptr_indev;
@@ -107,8 +108,9 @@ static void app_update_info(app_ctx_t *ctx)
     char info[200];
     snprintf(title, sizeof(title), "%s (%s)", app_name(), ctx->is_foreground ? "Foreground" : "Background");
     lv_label_set_text(ctx->title_label, title);
-    snprintf(info, sizeof(info), "beat=%lu\nviewport=%ux%u\nnav=%s",
-             (unsigned long)ctx->beat, ctx->vp_w, ctx->vp_h, ctx->nav_visible ? "visible" : "hidden");
+    snprintf(info, sizeof(info), "beat=%lu\npresents=%lu\nviewport=%ux%u\nnav=%s",
+             (unsigned long)ctx->beat, (unsigned long)ctx->present_sent, ctx->vp_w, ctx->vp_h,
+             ctx->nav_visible ? "visible" : "hidden");
     lv_label_set_text(ctx->info_label, info);
 }
 
@@ -155,6 +157,7 @@ static void app_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_
         uint8_t *src = px_map + (uint32_t)(y - area->y1) * line_bytes;
         memcpy(dst, src, line_bytes);
     }
+    ctx->present_sent++;
     app_send_present(ctx, (uint16_t)area->x1, (uint16_t)area->y1, (uint16_t)w, (uint16_t)lv_area_get_height(area));
     lv_display_flush_ready(disp);
 }
@@ -247,6 +250,11 @@ int app_main(void)
             ctx.beat++;
             lv_obj_set_style_bg_color(ctx.root, app_bg(ctx.is_foreground), LV_PART_MAIN);
             app_update_info(&ctx);
+            /* Background: ensure labels stay dirty so flush_cb keeps firing (shell still composites fg only). */
+            if (!ctx.is_foreground) {
+                lv_obj_invalidate(ctx.info_label);
+                lv_obj_invalidate(ctx.title_label);
+            }
         }
 
         {

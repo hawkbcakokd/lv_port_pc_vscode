@@ -13,6 +13,8 @@
  *   display: it copies tiles into the shared region and notifies the shell
  *   (MSG_APP_PRESENT). The shell composites that region into the final image
  *   and presents it, so only one app's pixels appear in the middle at a time.
+ *   Background apps may keep flushing + sending PRESENT; the shell counts those
+ *   (for debug) but only blits the foreground id.
  *
  * CMake builds both programs in one pass (see CMakeLists.txt):
  *   bin/main         ¡ª target compiles with -DSHELL_PROCESS

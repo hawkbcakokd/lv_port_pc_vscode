@@ -101,6 +101,13 @@ else()
     target_compile_definitions(main PRIVATE LV_CONF_INCLUDE_SIMPLE)
     lv_port_target_includes_and_link(main)
 
+    # App LVGL draw buffer mode (see shell_app_runtime/app_display_config.h).
+    # CACHE default applies only on first configure; existing build/CMakeCache.txt wins.
+    # Override: cmake -DAPP_LV_DISPLAY_BUFFER_MODE=2 ..   or unset: cmake -UAPP_LV_DISPLAY_BUFFER_MODE ..
+    # set(APP_LV_DISPLAY_BUFFER_MODE "2" CACHE STRING "App LVGL: 0=FULL1 1=FULL2 2=PARTIAL1 3=PARTIAL2 4=DIRECT1 5=DIRECT2")
+    set(APP_PARTIAL_BUF_LINES "80" CACHE STRING "PARTIAL strip height in pixels")
+    add_definitions(-DAPP_LV_DISPLAY_BUFFER_MODE=5 )
+
     add_executable(shell
         ${PROJECT_SOURCE_DIR}/main/src/main.c
         ${PROJECT_SOURCE_DIR}/main/src/mouse_cursor_icon.c
@@ -117,7 +124,8 @@ else()
         ${PROJECT_SOURCE_DIR}/shell_app_runtime/app/app_runtime.c
         ${PROJECT_SOURCE_DIR}/shell_app_runtime/ipc.c
     )
-    target_compile_definitions(app_runtime PRIVATE LV_CONF_INCLUDE_SIMPLE APP_PROCESS APP_VARIANT=0)
+    target_compile_definitions(app_runtime PRIVATE LV_CONF_INCLUDE_SIMPLE APP_PROCESS APP_VARIANT=0
+        APP_LV_DISPLAY_BUFFER_MODE=${APP_LV_DISPLAY_BUFFER_MODE} APP_PARTIAL_BUF_LINES=${APP_PARTIAL_BUF_LINES})
     lv_port_target_includes_and_link(app_runtime)
 
     add_executable(app_runtime_b
@@ -126,7 +134,8 @@ else()
         ${PROJECT_SOURCE_DIR}/shell_app_runtime/app/app_runtime.c
         ${PROJECT_SOURCE_DIR}/shell_app_runtime/ipc.c
     )
-    target_compile_definitions(app_runtime_b PRIVATE LV_CONF_INCLUDE_SIMPLE APP_PROCESS APP_VARIANT=1)
+    target_compile_definitions(app_runtime_b PRIVATE LV_CONF_INCLUDE_SIMPLE APP_PROCESS APP_VARIANT=1
+        APP_LV_DISPLAY_BUFFER_MODE=${APP_LV_DISPLAY_BUFFER_MODE} APP_PARTIAL_BUF_LINES=${APP_PARTIAL_BUF_LINES})
     lv_port_target_includes_and_link(app_runtime_b)
 
     add_executable(app_runtime_c
@@ -135,7 +144,8 @@ else()
         ${PROJECT_SOURCE_DIR}/shell_app_runtime/app/app_runtime.c
         ${PROJECT_SOURCE_DIR}/shell_app_runtime/ipc.c
     )
-    target_compile_definitions(app_runtime_c PRIVATE LV_CONF_INCLUDE_SIMPLE APP_PROCESS APP_VARIANT=2)
+    target_compile_definitions(app_runtime_c PRIVATE LV_CONF_INCLUDE_SIMPLE APP_PROCESS APP_VARIANT=2
+        APP_LV_DISPLAY_BUFFER_MODE=${APP_LV_DISPLAY_BUFFER_MODE} APP_PARTIAL_BUF_LINES=${APP_PARTIAL_BUF_LINES})
     lv_port_target_includes_and_link(app_runtime_c)
 
     add_executable(shell_sdl_smoke ${PROJECT_SOURCE_DIR}/tests/shell_sdl_smoke.c)

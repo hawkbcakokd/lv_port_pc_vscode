@@ -6,6 +6,8 @@
 **更深入专题（合成 / 触摸 / 按键 / touch_proxy / viewport / 共享内存安全）见：**  
 [`COMPOSITOR_INPUT_AND_SECURITY.md`](COMPOSITOR_INPUT_AND_SECURITY.md)
 
+**App 进程 LVGL 缓冲模式（FULL / PARTIAL / DIRECT × 单/双缓冲，0..5）**：`shell_app_runtime/app_display_config.h`，CMake 变量 `APP_LV_DISPLAY_BUFFER_MODE`、`APP_PARTIAL_BUF_LINES`（见根 `CMakeLists.txt`）。原先用 `3` 表示 DIRECT 单缓冲的需改为 `4`。
+
 ---
 
 ## 1. 三层与你问题的对应关系

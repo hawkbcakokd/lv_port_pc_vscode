@@ -4,6 +4,7 @@
 #define _GNU_SOURCE
 #include "protocol.h"
 #include "ipc.h"
+#include "app_display_config.h"
 #include "lvgl/lvgl.h"
 #include "lvgl/src/draw/lv_draw_buf.h"
 
@@ -39,6 +40,7 @@ typedef struct {
     uint32_t present_sent; /* flush_cb: proves LVGL still submitting frames */
     lv_display_t *disp;
     void *draw_buf_owner;
+    void *draw_buf2_owner; /* second draw buffer when mode uses double buffering */
     lv_indev_t *ptr_indev;
     lv_obj_t *root;
     lv_obj_t *title_label;
@@ -58,6 +60,25 @@ static const char *app_name(void)
 }
 
 static uint16_t app_id(void) { return (uint16_t)(APP_VARIANT + 1); }
+
+static const char *app_render_mode_str(void)
+{
+#if APP_LV_DISPLAY_BUFFER_MODE == APP_LV_BUF_FULL_SINGLE
+    return "FULL 1buf";
+#elif APP_LV_DISPLAY_BUFFER_MODE == APP_LV_BUF_FULL_DOUBLE
+    return "FULL 2buf";
+#elif APP_LV_DISPLAY_BUFFER_MODE == APP_LV_BUF_PARTIAL_SINGLE
+    return "PARTIAL 1buf";
+#elif APP_LV_DISPLAY_BUFFER_MODE == APP_LV_BUF_PARTIAL_DOUBLE
+    return "PARTIAL 2buf";
+#elif APP_LV_DISPLAY_BUFFER_MODE == APP_LV_BUF_DIRECT_SINGLE
+    return "DIRECT 1buf";
+#elif APP_LV_DISPLAY_BUFFER_MODE == APP_LV_BUF_DIRECT_DOUBLE
+    return "DIRECT 2buf";
+#else
+    return "?";
+#endif
+}
 
 static lv_color_t app_bg(bool fg)
 {
@@ -107,11 +128,11 @@ static int app_send_present(app_ctx_t *ctx, uint16_t x, uint16_t y, uint16_t w, 
 static void app_update_info(app_ctx_t *ctx)
 {
     char title[64];
-    char info[200];
+    char info[240];
     snprintf(title, sizeof(title), "%s (%s)", app_name(), ctx->is_foreground ? "Foreground" : "Background");
     lv_label_set_text(ctx->title_label, title);
-    snprintf(info, sizeof(info), "beat=%lu\npresents=%lu\nviewport=%ux%u\nnav=%s",
-             (unsigned long)ctx->beat, (unsigned long)ctx->present_sent, ctx->vp_w, ctx->vp_h,
+    snprintf(info, sizeof(info), "render=%s\nbeat=%lu\npresents=%lu\nviewport=%ux%u\nnav=%s",
+             app_render_mode_str(), (unsigned long)ctx->beat, (unsigned long)ctx->present_sent, ctx->vp_w, ctx->vp_h,
              ctx->nav_visible ? "visible" : "hidden");
     lv_label_set_text(ctx->info_label, info);
 }
@@ -162,16 +183,130 @@ static void app_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_
 {
     app_ctx_t *ctx = (app_ctx_t *)lv_display_get_user_data(disp);
     int32_t y;
-    int32_t w = lv_area_get_width(area);
-    uint32_t line_bytes = (uint32_t)w * BPP;
-    for (y = area->y1; y <= area->y2; y++) {
-        uint8_t *dst = ctx->surface + (uint32_t)y * ctx->stride + (uint32_t)area->x1 * BPP;
-        uint8_t *src = px_map + (uint32_t)(y - area->y1) * line_bytes;
-        memcpy(dst, src, line_bytes);
+    const int32_t w = lv_area_get_width(area);
+    const uint32_t line_bytes = (uint32_t)w * BPP;
+    lv_draw_buf_t *dba = lv_display_get_buf_active(disp);
+    uint32_t src_stride = (dba && dba->header.stride) ? dba->header.stride : line_bytes;
+    if (src_stride < line_bytes) src_stride = line_bytes;
+
+    /*
+     * PARTIAL: strip buffer (row 0 == screen area->y1). FULL/DIRECT: full-frame buffer.
+     * Copy every flush; do not gate on lv_display_flush_is_last (unreliable on some paths).
+     */
+    if (lv_display_get_render_mode(disp) == LV_DISPLAY_RENDER_MODE_PARTIAL) {
+        for (y = area->y1; y <= area->y2; y++) {
+            uint8_t *dst = ctx->surface + (uint32_t)y * ctx->stride + (uint32_t)area->x1 * BPP;
+            uint8_t *src = px_map + (uint32_t)(y - area->y1) * src_stride;
+            memcpy(dst, src, line_bytes);
+        }
+    } else {
+        for (y = area->y1; y <= area->y2; y++) {
+            uint8_t *dst = ctx->surface + (uint32_t)y * ctx->stride + (uint32_t)area->x1 * BPP;
+            uint8_t *src = px_map + (uint32_t)y * src_stride + (uint32_t)area->x1 * BPP;
+            memcpy(dst, src, line_bytes);
+        }
     }
+
     ctx->present_sent++;
     app_send_present(ctx, (uint16_t)area->x1, (uint16_t)area->y1, (uint16_t)w, (uint16_t)lv_area_get_height(area));
     lv_display_flush_ready(disp);
+}
+
+static int app_configure_display_buffers(app_ctx_t *ctx)
+{
+    lv_color_format_t cf = lv_display_get_color_format(ctx->disp);
+    uint32_t stride = lv_draw_buf_width_to_stride(ctx->vp_w, cf);
+    uint32_t full_bytes = stride * APP_VP_MAX_H;
+    uint32_t partial_h = APP_PARTIAL_BUF_LINES;
+    void *b1;
+    /* Framebuffers can exceed LVGL's lv_mem pool (LV_MEM_SIZE); use libc malloc, not lv_malloc. */
+
+    if (partial_h > APP_VP_MAX_H) partial_h = APP_VP_MAX_H;
+    if (partial_h < 8) partial_h = 8;
+
+    ctx->draw_buf2_owner = NULL;
+
+#if APP_LV_DISPLAY_BUFFER_MODE == APP_LV_BUF_FULL_SINGLE
+    ctx->draw_buf_owner = malloc(full_bytes + LV_DRAW_BUF_ALIGN * 2);
+    if (ctx->draw_buf_owner == NULL) return -1;
+    b1 = lv_draw_buf_align(ctx->draw_buf_owner, cf);
+    lv_display_set_buffers(ctx->disp, b1, NULL, full_bytes, LV_DISPLAY_RENDER_MODE_FULL);
+#elif APP_LV_DISPLAY_BUFFER_MODE == APP_LV_BUF_FULL_DOUBLE
+    void *b2;
+    ctx->draw_buf_owner = malloc(full_bytes + LV_DRAW_BUF_ALIGN * 2);
+    ctx->draw_buf2_owner = malloc(full_bytes + LV_DRAW_BUF_ALIGN * 2);
+    if (ctx->draw_buf_owner == NULL || ctx->draw_buf2_owner == NULL) {
+        if (ctx->draw_buf_owner) {
+            free(ctx->draw_buf_owner);
+            ctx->draw_buf_owner = NULL;
+        }
+        if (ctx->draw_buf2_owner) {
+            free(ctx->draw_buf2_owner);
+            ctx->draw_buf2_owner = NULL;
+        }
+        return -1;
+    }
+    b1 = lv_draw_buf_align(ctx->draw_buf_owner, cf);
+    b2 = lv_draw_buf_align(ctx->draw_buf2_owner, cf);
+    lv_display_set_buffers(ctx->disp, b1, b2, full_bytes, LV_DISPLAY_RENDER_MODE_FULL);
+#elif APP_LV_DISPLAY_BUFFER_MODE == APP_LV_BUF_PARTIAL_SINGLE
+    {
+        uint32_t partial_bytes = stride * partial_h;
+        ctx->draw_buf_owner = malloc(partial_bytes + LV_DRAW_BUF_ALIGN * 2);
+        if (ctx->draw_buf_owner == NULL) return -1;
+        b1 = lv_draw_buf_align(ctx->draw_buf_owner, cf);
+        lv_display_set_buffers(ctx->disp, b1, NULL, partial_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
+    }
+#elif APP_LV_DISPLAY_BUFFER_MODE == APP_LV_BUF_PARTIAL_DOUBLE
+    {
+        void *b2;
+        uint32_t partial_bytes = stride * partial_h;
+        ctx->draw_buf_owner = malloc(partial_bytes + LV_DRAW_BUF_ALIGN * 2);
+        ctx->draw_buf2_owner = malloc(partial_bytes + LV_DRAW_BUF_ALIGN * 2);
+        if (ctx->draw_buf_owner == NULL || ctx->draw_buf2_owner == NULL) {
+            if (ctx->draw_buf_owner) {
+                free(ctx->draw_buf_owner);
+                ctx->draw_buf_owner = NULL;
+            }
+            if (ctx->draw_buf2_owner) {
+                free(ctx->draw_buf2_owner);
+                ctx->draw_buf2_owner = NULL;
+            }
+            return -1;
+        }
+        b1 = lv_draw_buf_align(ctx->draw_buf_owner, cf);
+        b2 = lv_draw_buf_align(ctx->draw_buf2_owner, cf);
+        lv_display_set_buffers(ctx->disp, b1, b2, partial_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
+    }
+#elif APP_LV_DISPLAY_BUFFER_MODE == APP_LV_BUF_DIRECT_SINGLE
+    ctx->draw_buf_owner = malloc(full_bytes + LV_DRAW_BUF_ALIGN * 2);
+    if (ctx->draw_buf_owner == NULL) return -1;
+    b1 = lv_draw_buf_align(ctx->draw_buf_owner, cf);
+    lv_display_set_buffers(ctx->disp, b1, NULL, full_bytes, LV_DISPLAY_RENDER_MODE_DIRECT);
+#elif APP_LV_DISPLAY_BUFFER_MODE == APP_LV_BUF_DIRECT_DOUBLE
+    {
+        void *b2;
+        ctx->draw_buf_owner = malloc(full_bytes + LV_DRAW_BUF_ALIGN * 2);
+        ctx->draw_buf2_owner = malloc(full_bytes + LV_DRAW_BUF_ALIGN * 2);
+        if (ctx->draw_buf_owner == NULL || ctx->draw_buf2_owner == NULL) {
+            if (ctx->draw_buf_owner) {
+                free(ctx->draw_buf_owner);
+                ctx->draw_buf_owner = NULL;
+            }
+            if (ctx->draw_buf2_owner) {
+                free(ctx->draw_buf2_owner);
+                ctx->draw_buf2_owner = NULL;
+            }
+            return -1;
+        }
+        b1 = lv_draw_buf_align(ctx->draw_buf_owner, cf);
+        b2 = lv_draw_buf_align(ctx->draw_buf2_owner, cf);
+        lv_display_set_buffers(ctx->disp, b1, b2, full_bytes, LV_DISPLAY_RENDER_MODE_DIRECT);
+    }
+#else
+#error "APP_LV_DISPLAY_BUFFER_MODE must be 0..5 (see app_display_config.h)"
+#endif
+    return 0;
 }
 
 static void app_pointer_read(lv_indev_t *indev, lv_indev_data_t *data)
@@ -209,15 +344,21 @@ int app_main(void)
     memset(&ctx, 0, sizeof(ctx));
     ctx.ptr_state = LV_INDEV_STATE_RELEASED;
     ctx.sock = app_connect();
-    if (ctx.sock < 0) return 1;
+    if (ctx.sock < 0) {
+        return 1;
+    }
 
     memset(&out, 0, sizeof(out));
     out.type = MSG_APP_REGISTER;
     out.app_id = app_id();
-    if (ipc_send_msg(ctx.sock, &out) != 0) return 1;
+    if (ipc_send_msg(ctx.sock, &out) != 0) {
+        return 1;
+    }
 
     rc = ipc_recv_msg_with_fd(ctx.sock, &in, &recv_fd);
-    if (rc != 0 || in.type != MSG_SHELL_SURFACE || recv_fd < 0) return 1;
+    if (rc != 0 || in.type != MSG_SHELL_SURFACE || recv_fd < 0) {
+        return 1;
+    }
     ctx.memfd = recv_fd;
     ctx.vp_w = in.vp_w;
     ctx.vp_h = in.vp_h;
@@ -227,21 +368,21 @@ int app_main(void)
     {
         size_t map_size = (size_t)ctx.stride * (SCREEN_H - STATUS_H);
         ctx.surface = (uint8_t *)mmap(NULL, map_size, PROT_READ | PROT_WRITE, MAP_SHARED, ctx.memfd, 0);
-        if (ctx.surface == MAP_FAILED) return 1;
+        if (ctx.surface == MAP_FAILED) {
+            return 1;
+        }
     }
 
     ctx.disp = lv_display_create(ctx.vp_w, ctx.vp_h);
+    if (ctx.disp == NULL) {
+        return 1;
+    }
     lv_display_set_user_data(ctx.disp, &ctx);
     lv_display_set_flush_cb(ctx.disp, app_flush_cb);
-    {
-        lv_color_format_t cf = lv_display_get_color_format(ctx.disp);
-        uint32_t stride = lv_draw_buf_width_to_stride(ctx.vp_w, cf);
-        uint32_t buf_sz = stride * APP_VP_MAX_H;
-        ctx.draw_buf_owner = lv_malloc(buf_sz + LV_DRAW_BUF_ALIGN * 2);
-        if (ctx.draw_buf_owner == NULL) return 1;
-        lv_display_set_buffers(ctx.disp, lv_draw_buf_align(ctx.draw_buf_owner, cf), NULL, buf_sz,
-                               LV_DISPLAY_RENDER_MODE_FULL);
+    if (app_configure_display_buffers(&ctx) != 0) {
+        return 1;
     }
+
     lv_display_set_default(ctx.disp);
 
     ctx.kbd_group = lv_group_create();
